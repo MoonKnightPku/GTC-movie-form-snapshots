@@ -1,16 +1,41 @@
-function A=readallsnap
+function A=readallsnap(target_dir, output)
 
 % reads all snap*.out files into a matlab struct, 
-% from which it can be easily plotted.
+% from which numerical analysis can be easily produced.
+%
+% target_dir: is the target directory you want to read
+% 'a' or 'a/' work the same as reading all snap*.out in the a/ directory
+% if not specified, the default value is './'
+%
+% output is a switch (0 or 1) whether you want output during the reading
+% Sometimes the reading would take several minuites and you may want to
+% monitor the process to make sure it is running but not freezing. 
+% if not specified, the default value is output=0
 %
 
-dat=dir('./snap*.out');
-
-if length(dat)==0
-    error('Error: no snap*.out found in current directory');
+%% initialization: handle optional argument and deal with potential format issue
+if ~exist('target_dir','var') || isempty(target_dir)
+    fprintf('Target directory not set, reading the current directory.\n')
+    % default target directory
+    filename = './';
 end
 
-tmp=importdata(dat(1).name);
+if ~exist('output','var') || isempty(output)
+    % default target directory
+    output=0;
+end
+
+
+if target_dir(length(target_dir)) ~= '/'
+    % if target_dir not ends with '/', add '/' to the end of target_dir
+    target_dir = strcat(target_dir , '/');
+end
+
+
+%% read in the first file, and set up the dimensions
+dat=dir(strcat(target_dir,'snap*0*.out'));
+
+tmp=importdata(strcat(target_dir, dat(1).name));
 
 A.nspecies=tmp(1);
 A.nfield=tmp(2);
@@ -28,12 +53,14 @@ mtgrid=A.mtgrid;
 mtoroidal=A.mtoroidal;
 tmax=A.tmax;
 
-rho = dir('./rho.out');
-if length(rho)==0
+rhofile = strcat(target_dir, 'rho.out');
+if length(dir(rhofile))==0
     A.rho = 0:mpsi-1;
-else    
-    A.rho=importdata('./rho.out');
-end    
+else
+    A.rho=importdata(rhofile);
+end
+
+
 
 A.profile=zeros(length(dat),mpsi,6,nspecies);
 A.pdf=zeros(length(dat),nvgrid,4,nspecies);
@@ -48,11 +75,13 @@ A.fieldrms=zeros(length(dat),mpsi,nfield);
 
 A.totalnumber=length(dat);
 
-
+%% read in the rest data file
 for i=1:length(dat)
-    fprintf('Now processing %s\n',dat(i).name);
+    if (output>0)
+        fprintf('Now processing %s\n',strcat(target_dir, dat(i).name));
+    end
     if (i>1) 
-        tmp=importdata(dat(i).name);
+        tmp=importdata(strcat(target_dir, dat(i).name));
     end
     A.profile(i,:,:,:)=reshape(tmp(8:A.mpsi*6*A.nspecies+7),[A.mpsi,6,A.nspecies]);
     index=A.mpsi*6*A.nspecies+8;
@@ -72,7 +101,7 @@ for i=1:length(dat)
     A.t(i)=str2num(dat(i).name(5:9));
     for j=1:mpsi
         for k=1:nfield
-            A.fieldrms(i,j,k)=A.poloidata(i,:,j,k)*transpose(A.poloidata(i,:,j,k))/mtgrid;
+            A.fieldrms(i,j,k)=rms(A.poloidata(i,:,j,k));
         end
     end
 end

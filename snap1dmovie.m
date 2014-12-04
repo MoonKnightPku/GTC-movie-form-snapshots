@@ -1,4 +1,4 @@
-function snapmovie(snapdata, filename, nfield, speed, framerate, framequality, outerxsize, outerzsize)
+function snap1dmovie(snapdata, filename, nfield, m, speed, framerate, framequality, outerxsize, outerzsize)
 % This function generates a move from GTC snapshots output
 % This function uses VideoWriter Object from Matlab, which is only
 % supported since 2010b. Check your Matlab Version before using.
@@ -10,6 +10,10 @@ function snapmovie(snapdata, filename, nfield, speed, framerate, framequality, o
 %
 % "nfield" is the field you want to plot in the movie. The defaults are
 % 1:phi         % 2: apara        % 3: fluidne
+%
+% "m" is the poloidal harmonics you want to analyse. 
+% Default: pick m_max from the center of the radius in the last snapshot, 
+% and use m = [m_max-2: m_max+2]
 %
 % "speed" is the speed of your movie.
 % For example, speed = 2 will generate one frame from 2 snapshot files
@@ -37,6 +41,13 @@ if ~exist('filename','var') || isempty(filename)
     filename = 'GTCsnapmovie.avi';
 end
 
+if ~exist('m','var') || isempty(m)
+    automatic_pick = 1;
+    m = [1,2,3,4];
+else
+    automatic_pick = 0;
+end
+
 if ~exist('speed', 'var') || isempty(speed)
     speed=1;
 end
@@ -54,15 +65,44 @@ if ~exist('framequality', 'var') || isempty(framequality)
 end
 
 if ~exist('outerxsize', 'var') || isempty(outerxsize)
-    outerxsize = 1200;
+    outerxsize = 800;
 end
 
 if ~exist('outerzsize', 'var') || isempty(outerzsize)
-    outerzsize = 800;
+    outerzsize = 600;
+end
+
+nFrame=floor(snap.totalnumber/speed);
+%% Analysing m-harmonics on each flux surface of each snapshot
+
+fftdata = zeros(snap.mpsi, length(m), snap.totalnumber);
+
+if automatic_pick>0
+% target poloidal harmonics not defined
+    tmpdata = reshape(snap.poloidata(snap.totalnumber, :, floor(snap.mpsi/2),nfield),[snap.mtgrid,1]);
+    tmpdata = fft(tmpdata);
+    [val0, m0] = max(tmpdata);
+    if m0> length(tmpdata)/2
+        % m0 and length(tmpdata)-m0 are complex conjugate to each other
+        m0 = length(tmpdata)-m0;
+    end
+    m = [m0-2:m0+2];
+    fprintf('Target poloidal harmnoics not defined.\n');
+    fprintf('Automatic Picking picks m= %s \n', strtrim(sprintf('%d ',m)));
+end
+
+for istep = 1:snap.totalnumber
+    for iflux =1:snap.mpsi
+        tmpdata = reshape(snap.poloidata(istep,:,iflux,nfield),[snap.mtgrid,1]);
+        tmpdata = fft(tmpdata);
+        for i0 = 1:length(m)
+            fftdata(iflux, i0, istep) = abs(tmpdata(m(i0)))/snap.mtgrid*sqrt(2);
+        end
+        
+    end
 end
 
 
-nFrame=floor(snap.totalnumber/speed);
 %% Prepare Video Writer
 vid = VideoWriter(filename);
 vid.FrameRate=framerate;
@@ -71,14 +111,6 @@ vid.Quality=framequality;
 hFig = figure(1);
 set(hFig, 'Outerposition', [0 0 outerxsize outerzsize]);
 
-xsize=max(max(snap.x))-min(min(snap.x));
-zsize=max(max(snap.z))-min(min(snap.z));
-
-%set x and z have the same scale
-height=0.9;
-width=xsize/zsize*height*outerzsize/outerxsize;
-width = min(width, 0.55);
-
 set(gca,'nextplot','replacechildren');
 set(gcf,'Renderer','zbuffer');
 
@@ -86,59 +118,34 @@ open(vid)
 
 
 %% Start writing frames
+
+legend_names = cell(1,length(m)+1);
+
 for k=1:nFrame
     i0=speed*k;
     set(hFig, 'Outerposition', [0 0 outerxsize outerzsize]);
     
-   
+    for i=1:length(m)
+        tmpdata = reshape(fftdata(:,i,i0),[snap.mpsi,1]);
+        plot(snap.rho, tmpdata, '--');
+        if i==1
+            hold all
+        end
+        legend_names{i} = strcat('m=',num2str(m(i)));
+    end
+    rmsdata = reshape(snap.fieldrms(i0, :, nfield), [snap.mpsi, 1]);
+    plot(snap.rho, rmsdata , 'k-', 'linewidth',2);
+    legend_names{length(m)+1} = 'total amp.';
+    hold off
     
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    % First subplot, radial RMS profile of phi
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    leftedge = max(0.6, 0.1+width);
-    width2 = 0.95-leftedge;
-    
-    s2=subplot(2,2,2, 'Position',[leftedge,0.55,width2,0.4]);
-    %set(s2,'Units','Normalized','Position',[0.14+width,0.55,0.85-width,0.4]);
-    plot(snap.rho,snap.fieldrms(i0,:,1));
-    xlabel('rho');
-    title('phi RMS');
-    
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    % Second subplot, radial RMS profile of apara
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    s3=subplot(2,2,4,'Position',[leftedge,0.05,width2,0.4] );
-    %set(s3,'Units','Normalized','Position',[0.14+width,0.05,0.85-width,0.4]);
-    plot(snap.rho,snap.fieldrms(i0,:,2));
-    xlabel('rho');
-    title('apara RMS');
-    
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    % The last (main) subplot, contour plots from snapdata
-    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    s1=subplot(2,2,[1 3]);
-    set(s1,'Units','Normalized','Position',[0.03,0.05,width,height]);
-    contourf(snap.x,snap.z,reshape(snap.poloidata(i0,:,:,nfield),snap.mtgrid,snap.mpsi));
-    xlabel('X/R_0');
-    ylabel('Z/R_0');
+    legend(legend_names);
     
     % insert time label for each frame
+    ylim = get(gca, 'YLim');
+    xlim = get(gca, 'XLim');
+    xpos = xlim(2)*0.2;   ypos = ylim(2)*0.8;
     currenttime=['tstep=',num2str(snap.t(i0))];
-    text(1.15,0.4,currenttime);
-    
-    % you can customize  the title of this subplot yourself
-    if (nfield ==1)
-        title('\delta \phi contour');
-    elseif (nfield==2)
-        title('\delta Apara contour');
-    elseif (nfield==3)
-        title('fluidne countour');
-    end
-    
-    % plot colorbar
-    colorbar;
- 
-    
+    text(xpos, ypos,currenttime);
     
     % write the frame into the video
     frame=getframe(gcf);
